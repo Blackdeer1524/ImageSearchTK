@@ -12,6 +12,9 @@ from PIL import Image, ImageTk
 from requests.exceptions import ConnectionError
 
 
+__all__ = ["ScrolledFrame", "ImageFinder"]
+
+
 class ScrolledFrame(Frame):
     """Implementation of the scrollable frame widget.
     Copyright (c) 2018 Benjamin Johnson
@@ -303,7 +306,7 @@ class ScrolledFrame(Frame):
     _VALID_SCROLLBARS = "vertical", "horizontal", "both", "neither"
 
 
-class ImageFinder:
+class ImageFinder(Toplevel):
     def __init__(self, master, search_term, saving_dir, async_loop, **kwargs):
         """
         :param master:
@@ -327,6 +330,8 @@ class ImageFinder:
         :param window_height_limit: maximum height of the window
         :param window_bg: window background color
         """
+        Toplevel.__init__(self, master)
+
         self.button_bg = "#FFFFFF"
         self.activebackground = "#FFFFFF"
         self.saving_dir = saving_dir
@@ -365,12 +370,11 @@ class ImageFinder:
 
         self.optimal_result_width = kwargs.get("saving_image_width")
         self.optimal_result_height = kwargs.get("saving_image_height")
-        self.main_window = Toplevel(master=master)
-        self.main_window.title("Image search")
+        self.title("Image search")
 
-        self.sf = ScrolledFrame(self.main_window, scrollbars="both")
+        self.sf = ScrolledFrame(self, scrollbars="both")
         self.sf.pack(side="top", expand=1, fill="both")
-        self.sf.bind_scroll_wheel(self.main_window)
+        self.sf.bind_scroll_wheel(self)
         self.inner_frame = self.sf.display_widget(partial(Frame, bg=kwargs.get("window_bg", "#FFFFFF")))
 
         window_width_limit = kwargs.get("window_width_limit")
@@ -385,19 +389,14 @@ class ImageFinder:
         self.downloading_indexes = []
         self.button_list = []
 
-        self.main_window.grab_set()
-        self.main_window.resizable(0, 0)
-        self.main_window.protocol("WM_DELETE_WINDOW", self.close_image_search)
-        self.main_window.bind("<Escape>", lambda event: self.main_window.destroy())
-        self.main_window.bind("<Return>", lambda event: self.close_image_search())
+        self.resizable(0, 0)
+        self.protocol("WM_DELETE_WINDOW", self.close_image_search)
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Return>", lambda event: self.close_image_search())
 
     async def init_session(self):
         connector = aiohttp.TCPConnector(limit=self.n_images_in_row * self.n_rows)
         self.session = aiohttp.ClientSession(headers=self.headers, connector=connector)
-
-    def geometry(self, new_geometry):
-        self.main_window.geometry(new_geometry)
-        self.main_window.update()
 
     def start(self):
         if hasattr(self, "show_more_gen"):  # checks whether current instance has images to fetch
@@ -411,7 +410,7 @@ class ImageFinder:
                                               width=self.optimal_result_width, height=self.optimal_result_height)
             saving_name = self.image_saving_name_pattern.format(self.saving_images_names[index])
             saving_image.save(f"{self.saving_dir}/{saving_name}.png")
-        self.main_window.destroy()
+        self.destroy()
     
     @staticmethod
     def prepare_image(img, width: int = None, height: int = None):
@@ -553,6 +552,7 @@ if __name__ == "__main__":
         image_finder = ImageFinder(search_term=word, master=master, saving_dir=saving_dir, async_loop=async_loop,
                                    **kwargs)
         image_finder.start()
+
 
     test_urls = ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"]
 
