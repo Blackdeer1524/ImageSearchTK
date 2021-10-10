@@ -12,7 +12,7 @@ from PIL import Image, ImageTk
 from requests.exceptions import ConnectionError
 
 
-__all__ = ["ScrolledFrame", "ImageFinder"]
+__all__ = ["ScrolledFrame", "ImageSearch"]
 
 
 class ScrolledFrame(Frame):
@@ -306,29 +306,30 @@ class ScrolledFrame(Frame):
     _VALID_SCROLLBARS = "vertical", "horizontal", "both", "neither"
 
 
-class ImageFinder(Toplevel):
+class ImageSearch(Toplevel):
     def __init__(self, master, search_term, saving_dir, async_loop, **kwargs):
         """
-        :param master:
-        :param search_term:
-        :param saving_dir:
-        :param url_scrapper: function that returns image urls by given query
-        :param init_urls: custom urls to be displayed
-        :param async_loop: asyncio Event Loop
-        :param headers: request headers
-        :param timeout: request timeout
-        :param show_image_width: maximum image display width
-        :param show_image_height: maximum image display height
-        :param saving_image_width: maximum image saving width
-        :param saving_image_height: maximum image saving height
-        :param image_saving_name_pattern: modifies saving name. example: "this_image_{}"
-        :param n_images_in_row:
-        :param n_rows:
-        :param button_padx:
-        :param button_pady:
-        :param window_width_limit: maximum width of the window
-        :param window_height_limit: maximum height of the window
-        :param window_bg: window background color
+        master: \n
+        search_term: \n
+        saving_dir: \n
+        url_scrapper: function that returns image urls by given query\n
+        init_urls: custom urls to be displayed\n
+        async_loop: asyncio Event Loop\n
+        headers: request headers\n
+        timeout: request timeout\n
+        show_image_width: maximum image display width\n
+        show_image_height: maximum image display height\n
+        saving_image_width: maximum image saving width\n
+        saving_image_height: maximum image saving height\n
+        image_saving_name_pattern: modifies saving name. example: "this_image_{}"\n
+        n_images_in_row: \n
+        n_rows: \n
+        button_padx: \n
+        button_pady: \n
+        window_width_limit: maximum width of the window\n
+        window_height_limit: maximum height of the window\n
+        window_bg: window background color\n
+        on_close_action(**kwargs): additional action performed on closing.
         """
         Toplevel.__init__(self, master)
 
@@ -384,9 +385,11 @@ class ImageFinder(Toplevel):
         self.window_height_limit = window_height_limit if window_height_limit is not None else \
             master.winfo_screenheight() - self.sf._x_scrollbar.winfo_height() - 100
 
+        self.on_closing_action = kwargs.get("on_close_action")
+
         self.saving_images = []
         self.saving_images_names = []
-        self.downloading_indexes = []
+        self.downloading_indices = []
         self.button_list = []
 
         self.resizable(0, 0)
@@ -405,11 +408,14 @@ class ImageFinder(Toplevel):
 
     def close_image_search(self):
         self.async_loop.run_until_complete(self.session.close())
-        for index in self.downloading_indexes:
+        for index in self.downloading_indices:
             saving_image = self.prepare_image(self.saving_images[index],
                                               width=self.optimal_result_width, height=self.optimal_result_height)
             saving_name = self.image_saving_name_pattern.format(self.saving_images_names[index])
             saving_image.save(f"{self.saving_dir}/{saving_name}.png")
+        self.on_closing_action(saving_images_names=self.saving_images_names,
+                               saving_images_indices=self.downloading_indices,
+                               search_term=self.search_term)
         self.destroy()
     
     @staticmethod
@@ -489,10 +495,10 @@ class ImageFinder(Toplevel):
     def choose_pic(self, url_img_url, button):
         if not button.is_picked:
             button["bg"] = "#FF0000"
-            self.downloading_indexes.append(button.image_index)
+            self.downloading_indices.append(button.image_index)
         else:
             button["bg"] = self.button_bg
-            self.downloading_indexes.remove(button.image_index)
+            self.downloading_indices.remove(button.image_index)
         button.is_picked = not button.is_picked
 
     def show_images(self, cashed_image_batch, urls, start_row=0):
@@ -549,7 +555,7 @@ class ImageFinder(Toplevel):
 if __name__ == "__main__":
     def start_image_search(word, master, saving_dir, **kwargs):
         async_loop = asyncio.get_event_loop()
-        image_finder = ImageFinder(search_term=word, master=master, saving_dir=saving_dir, async_loop=async_loop,
+        image_finder = ImageSearch(search_term=word, master=master, saving_dir=saving_dir, async_loop=async_loop,
                                    **kwargs)
         image_finder.start()
 
