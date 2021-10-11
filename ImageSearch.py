@@ -498,6 +498,7 @@ class ImageSearch(Toplevel):
         self.show_more_button.configure(command=lambda x=self.show_more_gen: next(x))
 
         self.inner_frame = self.sf.display_widget(partial(Frame, bg=self.window_bg))
+        self.show_more_button["state"] = NORMAL
         next(self.show_more_gen)
 
     def close_image_search(self):
