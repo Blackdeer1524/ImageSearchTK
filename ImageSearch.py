@@ -436,7 +436,7 @@ class ImageSearch(Toplevel):
         self.start_search_button.grid(row=0, column=1, sticky="news",
                                       padx=(0, self.button_padx), pady=self.button_pady)
         self.start_search_button["state"] = NORMAL if self.url_scrapper else DISABLED
-        
+
         self.sf = ScrolledFrame(self, scrollbars="both")
         self.sf.grid(row=1, column=0, columnspan=2)
         self.sf.bind_scroll_wheel(self)
@@ -502,7 +502,6 @@ class ImageSearch(Toplevel):
         next(self.show_more_gen)
 
     def close_image_search(self):
-        self.async_loop.run_until_complete(self.session.close())
         for saving_index in self.saving_indices:
             saving_image = self.prepare_image(self.saving_images[saving_index],
                                               width=self.optimal_result_width, height=self.optimal_result_height)
@@ -513,11 +512,11 @@ class ImageSearch(Toplevel):
                                    saving_images_indices=self.saving_indices,
                                    search_term=self.search_term)
         self.destroy()
-    
+
     def destroy(self):
         super(ImageSearch, self).destroy()
         self.async_loop.run_until_complete(self.session.close())
-    
+
     @staticmethod
     def prepare_image(img, width: int = None, height: int = None):
         processed_img = copy.copy(img)
@@ -548,7 +547,7 @@ class ImageSearch(Toplevel):
                 return ImageSearch.StatusCodes.NORMAL, button_img, img, hash_url
         except (TimeoutError, ClientError):
             return ImageSearch.StatusCodes.FETCHING_ERROR, None, None, None
-        except IOError:
+        except (IOError, UnicodeError):
             return ImageSearch.StatusCodes.IMAGE_PROCESSING_ERROR, None, None, None
 
     def get_images(self, url_batch: list):
@@ -634,7 +633,6 @@ if __name__ == "__main__":
 
     def test_scrapper(search_term: None) -> list:
         return test_urls
-
     root = Tk()
     root.withdraw()
     root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
