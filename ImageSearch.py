@@ -513,6 +513,10 @@ class ImageSearch(Toplevel):
                                    search_term=self.search_term)
         self.destroy()
     
+    def destroy(self):
+        super(ImageSearch, self).destroy()
+        self.async_loop.run_until_complete(self.session.close())
+    
     @staticmethod
     def prepare_image(img, width: int = None, height: int = None):
         processed_img = copy.copy(img)
