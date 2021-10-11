@@ -629,7 +629,7 @@ if __name__ == "__main__":
 
     def test_scrapper(search_term: None) -> list:
         return test_urls
-    # from parsers.image_parsers.google import get_image_links as test_scrapper
+
     root = Tk()
     root.withdraw()
     root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
