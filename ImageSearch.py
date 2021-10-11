@@ -371,27 +371,30 @@ class ImageSearch(Toplevel):
         window_width_limit: maximum width of the window\n
         window_height_limit: maximum height of the window\n
         window_bg: window background color\n
+        entry_params(**kwargs)s: entry widget padams\n
+        command_button_params(**kwargs): "Show more" and "Download" buttons params\n
         on_close_action(**kwargs): additional action performed on closing.
         """
-        self.button_bg = "#FFFFFF"
-        self.activebackground = "#FFFFFF"
-        self.window_bg = kwargs.get("window_bg", "#FFFFFF")
-        
+        self.button_bg = self.activebackground = "#FFFFFF"
+        self.window_bg = kwargs.get("window_bg", "#F0F0F0")
+        self.command_button_params = kwargs.get("command_button_params", {})
+        self.entry_params = kwargs.get("entry_params", {})
+
         if not search_term:
             messagebox.showerror(message="Empty search query")
             return
-        
-        Toplevel.__init__(self, master, bg=self.window_bg)
 
         self.search_term = search_term
         self.img_urls = Deque(kwargs.get("init_urls", []))
-        url_scrapper = kwargs.get("url_scrapper")
-        if url_scrapper is not None:
+        self.url_scrapper = kwargs.get("url_scrapper")
+        if self.url_scrapper is not None:
             try:
-                self.img_urls.extend(url_scrapper(self.search_term))
+                self.img_urls.extend(self.url_scrapper(self.search_term))
             except ConnectionError:
                 messagebox.showerror(message="Check your internet connection")
                 return
+
+        Toplevel.__init__(self, master, bg=self.window_bg)
 
         self.saving_dir = saving_dir
 
@@ -420,12 +423,23 @@ class ImageSearch(Toplevel):
         self.optimal_result_width = kwargs.get("saving_image_width")
         self.optimal_result_height = kwargs.get("saving_image_height")
 
-        self.title("Image search")
-        self.sf = ScrolledFrame(self, scrollbars="both")
-        self.sf.pack(side="top", expand=1, fill="both")
-        self.sf.bind_scroll_wheel(self)
         self.button_padx = kwargs.get("button_padx", 10)
         self.button_pady = kwargs.get("button_pady", 10)
+        self.title("Image search")
+        self.search_field = Entry(self, justify="center", **self.entry_params)
+        self.search_field.insert(0, self.search_term)
+        self.start_search_button = Button(self, text="Search", command=self.restart_search,
+                                          **self.command_button_params)
+
+        self.search_field.grid(row=0, column=0, sticky="news",
+                               padx=(self.button_padx, 0), pady=self.button_pady)
+        self.start_search_button.grid(row=0, column=1, sticky="news",
+                                      padx=(0, self.button_padx), pady=self.button_pady)
+        self.start_search_button["state"] = NORMAL if self.url_scrapper else DISABLED
+        
+        self.sf = ScrolledFrame(self, scrollbars="both")
+        self.sf.grid(row=1, column=0, columnspan=2)
+        self.sf.bind_scroll_wheel(self)
         self.inner_frame = self.sf.display_widget(partial(Frame, bg=self.window_bg))
 
         window_width_limit = kwargs.get("window_width_limit")
@@ -436,10 +450,13 @@ class ImageSearch(Toplevel):
             master.winfo_screenheight() * 2 // 3
 
         self.show_more_gen = self.show_more()
-        self.show_more_button = Button(master=self.inner_frame, text="Show more",
-                                       command=lambda x=self.show_more_gen: next(x))
-        self.add_images = Button(master=self.inner_frame, text="Download",
-                                 command=lambda: self.close_image_search())
+
+        self.show_more_button = Button(master=self, text="Show more",
+                                       command=lambda x=self.show_more_gen: next(x), **self.command_button_params)
+        self.download_button = Button(master=self, text="Download",
+                                 command=lambda: self.close_image_search(), **self.command_button_params)
+        self.show_more_button.grid(row=3, column=0, sticky="news")
+        self.download_button.grid(row=3, column=1, sticky="news")
 
         self.on_closing_action = kwargs.get("on_close_action")
 
@@ -447,7 +464,6 @@ class ImageSearch(Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.close_image_search)
         self.bind("<Escape>", lambda event: self.destroy())
         self.bind("<Return>", lambda event: self.close_image_search())
-
 
     async def init_session(self):
         connector = aiohttp.TCPConnector(limit=self.n_images_in_row * self.n_rows)
@@ -457,7 +473,33 @@ class ImageSearch(Toplevel):
         if hasattr(self, "show_more_gen"):  # checks whether current instance has images to fetch
             self.async_loop.run_until_complete(self.init_session())
             next(self.show_more_gen)
-        
+
+    def restart_search(self):
+        self.search_term = self.search_field.get()
+        if not self.search_term:
+            messagebox.showerror(message="Empty search query")
+            return
+
+        try:
+            self.img_urls = Deque(self.url_scrapper(self.search_term))
+        except ConnectionError:
+            messagebox.showerror(message="Check your internet connection")
+            return
+
+        self.saving_images = []
+        self.saving_images_names = []
+        self.saving_indices = []
+
+        self.last_button_row = 0
+        self.last_button_column = 0
+        self.last_button_index = 0
+
+        self.show_more_gen = self.show_more()
+        self.show_more_button.configure(command=lambda x=self.show_more_gen: next(x))
+
+        self.inner_frame = self.sf.display_widget(partial(Frame, bg=self.window_bg))
+        next(self.show_more_gen)
+
     def close_image_search(self):
         self.async_loop.run_until_complete(self.session.close())
         for saving_index in self.saving_indices:
@@ -558,24 +600,19 @@ class ImageSearch(Toplevel):
         self.last_button_column = self.last_button_index % self.n_images_in_row
 
     def show_more(self):
-        more_colspan = self.n_images_in_row // 2
-        if self.n_images_in_row % 2 == 1:
-            more_colspan += 1
-
+        self.update()
+        command_widget_total_height = self.download_button.winfo_height() + self.search_field.winfo_height() + \
+                                      2 * self.button_pady
         while self.img_urls:
             button_image_batch = self.async_loop.run_until_complete(
                 self.process_batch(self.n_images_per_cycle - self.last_button_column))
             self.show_images(button_image_batch)
-            self.show_more_button.grid(row=self.last_button_row + 1, column=0,
-                                       columnspan=more_colspan, sticky="nwes")
-            self.add_images.grid(row=self.last_button_row + 1, column=more_colspan,
-                                 columnspan=more_colspan, sticky="nwes")
-
             self.inner_frame.update()
             current_frame_width = self.inner_frame.winfo_width()
             current_frame_height = self.inner_frame.winfo_height()
+
             self.sf.config(width=min(self.window_width_limit, current_frame_width),
-                           height=min(self.window_height_limit, current_frame_height))
+                           height=min(self.window_height_limit - command_widget_total_height, current_frame_height))
             yield
         self.show_more_button["state"] = DISABLED
         yield
@@ -592,8 +629,10 @@ if __name__ == "__main__":
 
     def test_scrapper(search_term: None) -> list:
         return test_urls
+    # from parsers.image_parsers.google import get_image_links as test_scrapper
     root = Tk()
     root.withdraw()
-    root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300,))
+    root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
     root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
     root.mainloop()
+
