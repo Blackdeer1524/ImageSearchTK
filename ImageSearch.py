@@ -376,12 +376,12 @@ class ImageSearch(Toplevel):
         self.button_bg = "#FFFFFF"
         self.activebackground = "#FFFFFF"
         self.window_bg = kwargs.get("window_bg", "#FFFFFF")
-
-        Toplevel.__init__(self, master, bg=self.window_bg)
-
+        
         if not search_term:
             messagebox.showerror(message="Empty search query")
             return
+        
+        Toplevel.__init__(self, master, bg=self.window_bg)
 
         self.search_term = search_term
         self.img_urls = Deque(kwargs.get("init_urls", []))
