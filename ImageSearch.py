@@ -1,4 +1,3 @@
-import re
 import asyncio
 import copy
 from functools import partial
@@ -6,13 +5,50 @@ from io import BytesIO
 from tkinter import *
 from tkinter import messagebox
 import sys
-
 import aiohttp
+from aiohttp.client_exceptions import ClientError
+from asyncio import TimeoutError
 from PIL import Image, ImageTk
 from requests.exceptions import ConnectionError
-
+from enum import Enum
 
 __all__ = ["ScrolledFrame", "ImageSearch"]
+
+
+class Deque:
+    def __init__(self, collection=None):
+        """
+        :param collection: iterable
+        """
+        self.deque = collection if collection is not None else []
+
+    def __len__(self):
+        return len(self.deque)
+
+    def __bool__(self):
+        return bool(self.deque)
+
+    def pop(self, n=1) -> list:
+        return [self.deque.pop() for _ in range(min(n, len(self.deque)))]
+
+    def popleft(self, n=1) -> list:
+        return [self.deque.pop(0) for _ in range(min(n, len(self.deque)))]
+
+    def append(self, item):
+        self.deque.append(item)
+
+    def appendleft(self, item):
+        self.deque.insert(0, item)
+
+    def extend(self, collection):
+        self.deque.extend(collection)
+
+    def extendleft(self, collection):
+        for i in range(len(collection)-1, -1, -1):
+            self.appendleft(collection[i])
+
+    def __repr__(self):
+        return f"Deque {self.deque}"
 
 
 class ScrolledFrame(Frame):
@@ -307,12 +343,18 @@ class ScrolledFrame(Frame):
 
 
 class ImageSearch(Toplevel):
+    class StatusCodes(Enum):
+        NORMAL = 0
+        FETCHING_ERROR = 1
+        IMAGE_PROCESSING_ERROR = 2
+
     def __init__(self, master, search_term, saving_dir, async_loop, **kwargs):
         """
         master: \n
         search_term: \n
         saving_dir: \n
         url_scrapper: function that returns image urls by given query\n
+        max_request_tries: how many retries allowed per one image-showing cycle\n
         init_urls: custom urls to be displayed\n
         async_loop: asyncio Event Loop\n
         headers: request headers\n
@@ -331,71 +373,81 @@ class ImageSearch(Toplevel):
         window_bg: window background color\n
         on_close_action(**kwargs): additional action performed on closing.
         """
-        Toplevel.__init__(self, master)
-
         self.button_bg = "#FFFFFF"
         self.activebackground = "#FFFFFF"
-        self.saving_dir = saving_dir
+        self.window_bg = kwargs.get("window_bg", "#FFFFFF")
 
-        self.async_loop = async_loop
-        self.headers = kwargs.get("headers")
-        self.timeout = kwargs.get("timeout", 1)
-        self.session = None
+        Toplevel.__init__(self, master, bg=self.window_bg)
 
         if not search_term:
             messagebox.showerror(message="Empty search query")
             return
 
         self.search_term = search_term
-        self.current_row_index = 0
-        self.n_images_in_row = kwargs.get("n_images_in_row", 3)
-        self.n_rows = kwargs.get("n_rows", 1)
-        self.img_urls = kwargs.get("init_urls", [])
-
+        self.img_urls = Deque(kwargs.get("init_urls", []))
         url_scrapper = kwargs.get("url_scrapper")
         if url_scrapper is not None:
             try:
-                self.img_urls.extend(url_scrapper(search_term))
+                self.img_urls.extend(url_scrapper(self.search_term))
             except ConnectionError:
                 messagebox.showerror(message="Check your internet connection")
                 return
 
-        self.show_more_gen = self.show_more()
-        self.button_padx = kwargs.get("button_padx", 10)
-        self.button_pady = kwargs.get("button_pady", 10)
+        self.saving_dir = saving_dir
+
+        self.session = None
+        self.async_loop = async_loop
+        self.headers = kwargs.get("headers")
+        self.timeout = kwargs.get("timeout", 1)
+        self.max_request_tries = kwargs.get("max_request_tries", 5)
+
+        self.last_button_row = 0
+        self.last_button_column = 0
+        self.last_button_index = 0
+        self.n_images_in_row = kwargs.get("n_images_in_row", 3)
+        self.n_rows = kwargs.get("n_rows", 1)
+        self.n_images_per_cycle = self.n_rows * self.n_images_in_row
+
+        self.saving_images = []
+        self.saving_images_names = []
+        self.saving_indices = []
+
+        self.image_saving_name_pattern = kwargs.get("image_saving_name_pattern", "{}")
 
         self.optimal_visual_width = kwargs.get("show_image_width")
         self.optimal_visual_height = kwargs.get("show_image_height")
 
-        self.image_saving_name_pattern = kwargs.get("image_saving_name_pattern", "{}")
-
         self.optimal_result_width = kwargs.get("saving_image_width")
         self.optimal_result_height = kwargs.get("saving_image_height")
-        self.title("Image search")
 
+        self.title("Image search")
         self.sf = ScrolledFrame(self, scrollbars="both")
         self.sf.pack(side="top", expand=1, fill="both")
         self.sf.bind_scroll_wheel(self)
-        self.inner_frame = self.sf.display_widget(partial(Frame, bg=kwargs.get("window_bg", "#FFFFFF")))
+        self.button_padx = kwargs.get("button_padx", 10)
+        self.button_pady = kwargs.get("button_pady", 10)
+        self.inner_frame = self.sf.display_widget(partial(Frame, bg=self.window_bg))
 
         window_width_limit = kwargs.get("window_width_limit")
         window_height_limit = kwargs.get("window_height_limit")
         self.window_width_limit = window_width_limit if window_width_limit is not None else \
-            master.winfo_screenwidth() - self.sf._y_scrollbar.winfo_width()
+            master.winfo_screenwidth() * 6 // 7
         self.window_height_limit = window_height_limit if window_height_limit is not None else \
-            master.winfo_screenheight() - self.sf._x_scrollbar.winfo_height() - 100
+            master.winfo_screenheight() * 2 // 3
+
+        self.show_more_gen = self.show_more()
+        self.show_more_button = Button(master=self.inner_frame, text="Show more",
+                                       command=lambda x=self.show_more_gen: next(x))
+        self.add_images = Button(master=self.inner_frame, text="Download",
+                                 command=lambda: self.close_image_search())
 
         self.on_closing_action = kwargs.get("on_close_action")
-
-        self.saving_images = []
-        self.saving_images_names = []
-        self.downloading_indices = []
-        self.button_list = []
 
         self.resizable(0, 0)
         self.protocol("WM_DELETE_WINDOW", self.close_image_search)
         self.bind("<Escape>", lambda event: self.destroy())
         self.bind("<Return>", lambda event: self.close_image_search())
+
 
     async def init_session(self):
         connector = aiohttp.TCPConnector(limit=self.n_images_in_row * self.n_rows)
@@ -405,17 +457,18 @@ class ImageSearch(Toplevel):
         if hasattr(self, "show_more_gen"):  # checks whether current instance has images to fetch
             self.async_loop.run_until_complete(self.init_session())
             next(self.show_more_gen)
-
+        
     def close_image_search(self):
         self.async_loop.run_until_complete(self.session.close())
-        for index in self.downloading_indices:
-            saving_image = self.prepare_image(self.saving_images[index],
+        for saving_index in self.saving_indices:
+            saving_image = self.prepare_image(self.saving_images[saving_index],
                                               width=self.optimal_result_width, height=self.optimal_result_height)
-            saving_name = self.image_saving_name_pattern.format(self.saving_images_names[index])
+            saving_name = self.image_saving_name_pattern.format(self.saving_images_names[saving_index])
             saving_image.save(f"{self.saving_dir}/{saving_name}.png")
-        self.on_closing_action(saving_images_names=self.saving_images_names,
-                               saving_images_indices=self.downloading_indices,
-                               search_term=self.search_term)
+        if self.on_closing_action is not None:
+            self.on_closing_action(saving_images_names=self.saving_images_names,
+                                   saving_images_indices=self.saving_indices,
+                                   search_term=self.search_term)
         self.destroy()
     
     @staticmethod
@@ -432,11 +485,6 @@ class ImageSearch(Toplevel):
                                                  Image.ANTIALIAS)
         return processed_img
 
-    def get_button_image(self, img):
-        img_show = self.prepare_image(img, width=self.optimal_visual_width, height=self.optimal_visual_height)
-        button_img = ImageTk.PhotoImage(img_show)
-        return button_img
-
     async def fetch(self, url):
         """
         fetches image from web
@@ -447,109 +495,90 @@ class ImageSearch(Toplevel):
             async with self.session.get(url, timeout=self.timeout) as response:
                 content = await response.content.read()
                 img = Image.open(BytesIO(content))
-                button_img = self.get_button_image(img)
+                button_img = ImageTk.PhotoImage(
+                    self.prepare_image(img, width=self.optimal_visual_width, height=self.optimal_visual_height))
                 hash_url = hash(url)
-                return True, button_img, img, hash_url
-        except Exception:
-            return False, None, None, None
+                return ImageSearch.StatusCodes.NORMAL, button_img, img, hash_url
+        except (TimeoutError, ClientError):
+            return ImageSearch.StatusCodes.FETCHING_ERROR, None, None, None
+        except IOError:
+            return ImageSearch.StatusCodes.IMAGE_PROCESSING_ERROR, None, None, None
 
-    def get_images(self, img_urls):
+    def get_images(self, url_batch: list):
         image_fetch_tasks = []
-        for url in img_urls:
+        for url in url_batch:
             image_fetch_tasks.append(self.fetch(url))
         return image_fetch_tasks
 
-    async def process_batch(self, index, step, request_depth=0):
+    async def process_batch(self, step, request_depth=0):
         button_images_batch = []
-        image_urls_batch = []
-        to_fetch_button_images_batch = []
-        to_fetch_image_urls_batch = []
-        url_batch = self.img_urls[index:index + step]
-        index += step
+        url_batch = self.img_urls.popleft(step)
         n_images_to_fetch = 0
 
         image_data_batch = self.get_images(url_batch)
 
         for check_index, image_future in enumerate(asyncio.as_completed(image_data_batch)):
             status, button_img, img, hash_url = await image_future
-            if status:
+            if status == ImageSearch.StatusCodes.NORMAL:
                 button_images_batch.append(button_img)
-                image_urls_batch.append(self.img_urls[check_index])
                 self.saving_images.append(img)
                 self.saving_images_names.append(hash_url)
+            elif status == ImageSearch.StatusCodes.FETCHING_ERROR:
+                self.img_urls.append(url_batch[check_index])
+                n_images_to_fetch += 1
             else:
                 n_images_to_fetch += 1
-        if request_depth < 10 and n_images_to_fetch:
-            index, to_fetch_button_images_batch, to_fetch_image_urls_batch = await self.process_batch(index,
-                                                                                                      n_images_to_fetch,
-                                                                                                      request_depth + 1)
+        if request_depth < self.max_request_tries and n_images_to_fetch:
+            to_fetch_button_images_batch = await self.process_batch(n_images_to_fetch, request_depth + 1)
+            button_images_batch.extend(to_fetch_button_images_batch)
+        return button_images_batch
 
-        return index, button_images_batch + to_fetch_button_images_batch, image_urls_batch + to_fetch_image_urls_batch
-
-    def get_batch_cash(self, step):
-        i = 0
-        while i < len(self.img_urls):
-            i, button_images_batch, image_urls_batch = self.async_loop.run_until_complete(self.process_batch(i, step))
-            yield button_images_batch, image_urls_batch
-
-    def choose_pic(self, url_img_url, button):
+    def choose_pic(self, button):
         if not button.is_picked:
             button["bg"] = "#FF0000"
-            self.downloading_indices.append(button.image_index)
+            self.saving_indices.append(button.image_index)
         else:
             button["bg"] = self.button_bg
-            self.downloading_indices.remove(button.image_index)
+            self.saving_indices.remove(button.image_index)
         button.is_picked = not button.is_picked
 
-    def show_images(self, cashed_image_batch, urls, start_row=0):
-        for j in range(len(cashed_image_batch)):
-            b = Button(master=self.inner_frame, image=cashed_image_batch[j],
+    def show_images(self, button_image_batch):
+        for j in range(len(button_image_batch)):
+            b = Button(master=self.inner_frame, image=button_image_batch[j],
                        bg=self.button_bg, activebackground=self.activebackground)
-            b.image = cashed_image_batch[j]
+            b.image = button_image_batch[j]
+            b.image_index = self.last_button_index
             b.is_picked = False
-            b.image_index = self.n_images_in_row * start_row + j
-            b["command"] = lambda x=urls[j], y=b: self.choose_pic(x, y)
-            b.grid(row=start_row + (j // self.n_images_in_row + 1), column=j % self.n_images_in_row,
+            b["command"] = lambda current_button=b: self.choose_pic(current_button)
+            b.grid(row=self.last_button_index // self.n_images_in_row,
+                   column=self.last_button_index % self.n_images_in_row,
                    padx=self.button_padx, pady=self.button_pady, sticky="news")
-            self.button_list.append(b)
-
-        # self.button_list[min(len(self.button_list) - 1, start_row * self.n_images_in_row)].focus_set()
-        # for j in range(len(self.button_list)):
-        #     self.button_list[j].lift()
-        #     self.button_list[j].bind("<Tab>", focus_next_window)
-        #     self.button_list[j].bind("<Shift-Tab>", focus_prev_window)
-        # self.show_more_button.lift()
+            self.last_button_index += 1
+        self.last_button_row = self.last_button_index // self.n_images_in_row
+        self.last_button_column = self.last_button_index % self.n_images_in_row
 
     def show_more(self):
         more_colspan = self.n_images_in_row // 2
         if self.n_images_in_row % 2 == 1:
             more_colspan += 1
 
-        self.show_more_button = Button(master=self.inner_frame, text="Show more",
-                                       command=lambda x=self.show_more_gen: next(x))
-        self.add_images = Button(master=self.inner_frame, text="Download",
-                                 command=lambda: self.close_image_search())
+        while self.img_urls:
+            button_image_batch = self.async_loop.run_until_complete(
+                self.process_batch(self.n_images_per_cycle - self.last_button_column))
+            self.show_images(button_image_batch)
+            self.show_more_button.grid(row=self.last_button_row + 1, column=0,
+                                       columnspan=more_colspan, sticky="nwes")
+            self.add_images.grid(row=self.last_button_row + 1, column=more_colspan,
+                                 columnspan=more_colspan, sticky="nwes")
 
-        cashed_generator = self.get_batch_cash(self.n_rows * self.n_images_in_row)
-        try:
-            for cashed_batch, urls in cashed_generator:
-                self.show_images(cashed_batch, urls, self.current_row_index)
-                self.current_row_index += self.n_rows
-                self.show_more_button.grid(row=self.current_row_index + 1, column=0,
-                                           columnspan=more_colspan, sticky="nwes")
-                self.add_images.grid(row=self.current_row_index + 1, column=more_colspan,
-                                     columnspan=more_colspan, sticky="nwes")
-
-                self.inner_frame.update()
-                current_frame_width = self.inner_frame.winfo_width()
-                current_frame_height = self.inner_frame.winfo_height()
-                self.sf.config(width=min(self.window_width_limit, current_frame_width),
-                               height=min(self.window_height_limit, current_frame_height))
-                yield
-            self.show_more_button["state"] = DISABLED
+            self.inner_frame.update()
+            current_frame_width = self.inner_frame.winfo_width()
+            current_frame_height = self.inner_frame.winfo_height()
+            self.sf.config(width=min(self.window_width_limit, current_frame_width),
+                           height=min(self.window_height_limit, current_frame_height))
             yield
-        except StopIteration:
-            self.show_more_button["state"] = DISABLED
+        self.show_more_button["state"] = DISABLED
+        yield
 
 
 if __name__ == "__main__":
@@ -559,14 +588,13 @@ if __name__ == "__main__":
                                    **kwargs)
         image_finder.start()
 
-
-    test_urls = ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"]
-
-    def test_scrapper(search_term: None) -> list:
-        return test_urls
-
+    # test_urls = ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"]
+    #
+    # def test_scrapper(search_term: None) -> list:
+    #     return test_urls
+    from parsers.image_parsers.google import get_image_links as test_scrapper
     root = Tk()
     root.withdraw()
-    root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
-    root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
+    root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300,))
+    # root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
     root.mainloop()
