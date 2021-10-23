@@ -3,5 +3,5 @@ Download images from given image urls
 
 # Requirements
 * PIL
-* aiohttp
+* tkinterdnd2
 * requests
