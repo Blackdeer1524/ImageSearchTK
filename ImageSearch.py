@@ -4,12 +4,14 @@ from io import BytesIO
 from tkinter import *
 from tkinter import messagebox
 import sys
+import os
 from PIL import Image, ImageTk
 from enum import Enum
 import requests
 from requests.exceptions import ConnectionError, RequestException, ConnectTimeout
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Thread
+import random
+from tkinterdnd2 import DND_FILES, DND_TEXT
 
 
 __all__ = ["ScrolledFrame", "ImageSearch"]
@@ -465,6 +467,9 @@ class ImageSearch(Toplevel):
         self.bind("<Escape>", lambda event: self.destroy())
         self.bind("<Return>", lambda event: self.close_image_search())
 
+        self.drop_target_register(DND_FILES, DND_TEXT)
+        self.dnd_bind('<<Drop>>', self.drop)
+
     def start(self):
         if hasattr(self, "show_more_gen"):  # checks whether current instance has images to fetch
             next(self.show_more_gen)
@@ -592,7 +597,7 @@ class ImageSearch(Toplevel):
             self.saving_indices.remove(button.image_index)
         button.is_picked = not button.is_picked
 
-    def show_images(self, button_image_batch):
+    def create_buttons(self, button_image_batch):
         for j in range(len(button_image_batch)):
             b = Button(master=self.inner_frame, image=button_image_batch[j],
                        bg=self.button_bg, activebackground=self.activebackground)
@@ -606,28 +611,50 @@ class ImageSearch(Toplevel):
             self.last_button_index += 1
         self.last_button_row = self.last_button_index // self.n_images_in_row
         self.last_button_column = self.last_button_index % self.n_images_in_row
+    
+    def show_button_image_batch(self, button_batch: list):
+        self.create_buttons(button_batch)
+        self.inner_frame.update()
+        current_frame_width = self.inner_frame.winfo_width()
+        current_frame_height = self.inner_frame.winfo_height()
 
+        self.sf.config(width=min(self.window_width_limit, current_frame_width),
+                       height=min(self.window_height_limit - self.command_widget_total_height, current_frame_height))
+    
     def show_more(self):
         self.update()
-        command_widget_total_height = self.download_button.winfo_height() + self.search_field.winfo_height() + \
-                                      2 * self.button_pady
+        self.command_widget_total_height = self.download_button.winfo_height() + self.search_field.winfo_height() + \
+                                           2 * self.button_pady
         while True:
             button_image_batch = self.process_batch(self.n_images_per_cycle - self.last_button_column)
-            self.show_images(button_image_batch)
-            self.inner_frame.update()
-            current_frame_width = self.inner_frame.winfo_width()
-            current_frame_height = self.inner_frame.winfo_height()
-
-            self.sf.config(width=min(self.window_width_limit, current_frame_width),
-                           height=min(self.window_height_limit - command_widget_total_height, current_frame_height))
+            self.show_button_image_batch(button_image_batch)
             if not self.img_urls:
                 self.show_more_button["state"] = DISABLED
                 break
             yield
         yield
 
+    def drop(self, event):
+        if event.data:
+            data_path = event.data
+            button_img_batch = []
+            if os.path.exists(data_path):
+                img = Image.open(data_path)
+                button_img_batch.append(ImageTk.PhotoImage(
+                    self.prepare_image(img, width=self.optimal_visual_width, height=self.optimal_visual_height)))
+                self.saving_images.append(img)
+                self.saving_images_names.append(hash(random.random()))
+            elif data_path.startswith("http"):
+                self.img_urls.appendleft(data_path)
+                button_img_batch.extend(self.process_batch(step=1,
+                                                           request_depth=self.max_request_tries))
+            self.show_button_image_batch(button_img_batch)
+        return event.action
+
 
 if __name__ == "__main__":
+    from tkinterdnd2 import Tk
+
     def start_image_search(word, master, saving_dir, **kwargs):
         image_finder = ImageSearch(search_term=word, master=master, saving_dir=saving_dir,
                                    **kwargs)
@@ -640,6 +667,7 @@ if __name__ == "__main__":
 
     root = Tk()
     root.withdraw()
+
     root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
     root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
     root.mainloop()
