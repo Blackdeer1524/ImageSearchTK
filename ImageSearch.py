@@ -375,7 +375,7 @@ class ImageSearch(Toplevel):
         window_bg: window background color\n
         entry_params(**kwargs)s: entry widget padams\n
         command_button_params(**kwargs): "Show more" and "Download" buttons params\n
-        on_close_action(**kwargs): additional action performed on closing.
+        on_close_action(image_search_instanse): additional action performed on closing.
         """
         if not search_term:
             messagebox.showerror(message="Empty search query")
@@ -508,9 +508,7 @@ class ImageSearch(Toplevel):
             saving_name = self.image_saving_name_pattern.format(self.saving_images_names[saving_index])
             saving_image.save(f"{self.saving_dir}/{saving_name}.png")
         if self.on_closing_action is not None:
-            self.on_closing_action(saving_images_names=self.saving_images_names,
-                                   saving_images_indices=self.saving_indices,
-                                   search_term=self.search_term)
+            self.on_closing_action(self)
         self.destroy()
 
     @staticmethod
