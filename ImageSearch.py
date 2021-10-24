@@ -375,7 +375,7 @@ class ImageSearch(Toplevel):
         window_bg: window background color\n
         entry_params(**kwargs)s: entry widget padams\n
         command_button_params(**kwargs): "Show more" and "Download" buttons params\n
-        on_close_action(image_search_instanse): additional action performed on closing.
+        on_close_action(**kwargs): additional action performed on closing.
         """
         if not search_term:
             messagebox.showerror(message="Empty search query")
@@ -504,9 +504,9 @@ class ImageSearch(Toplevel):
     def close_image_search(self):
         for saving_index in self.saving_indices:
             saving_image = self.prepare_image(self.saving_images[saving_index],
-                                              width=self.optimal_result_width, height=self.optimal_result_height)
-            saving_name = self.image_saving_name_pattern.format(self.saving_images_names[saving_index])
-            saving_image.save(f"{self.saving_dir}/{saving_name}.png")
+                                              width=self.optimal_result_width,
+                                              height=self.optimal_result_height)
+            saving_image.save(f"{self.saving_dir}/{self.saving_images_names[saving_index]}.png")
         if self.on_closing_action is not None:
             self.on_closing_action(self)
         self.destroy()
@@ -575,7 +575,7 @@ class ImageSearch(Toplevel):
             if status == ImageSearch.StatusCodes.NORMAL:
                 button_images_batch.append(button_img)
                 self.saving_images.append(img)
-                self.saving_images_names.append(hash_url)
+                self.saving_images_names.append(self.image_saving_name_pattern.format(hash_url))
             elif status == ImageSearch.StatusCodes.RETRIABLE_FETCHING_ERROR:
                 self.img_urls.append(url)
                 n_images_to_fetch += 1
@@ -667,6 +667,6 @@ if __name__ == "__main__":
     root.withdraw()
 
     root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
-    root.after(0, start_image_search("test", root, "./", url_scrapper=test_scrapper, show_image_width=300))
+    root.after(0, start_image_search("test", root, r"/", url_scrapper=test_scrapper, show_image_width=300))
     root.mainloop()
 
