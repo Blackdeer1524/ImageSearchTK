@@ -562,13 +562,18 @@ class ImageSearch(Toplevel):
         return image_fetch_tasks
 
     def process_batch(self, step, request_depth=0):
+        def add_fetching_to_queue():
+            nonlocal request_depth
+            if self.img_urls and request_depth < self.max_request_tries:
+                image_data_batch.append(self.pool.submit(self.fetch, self.img_urls.popleft()[0]))
+                request_depth += 1
+
         button_images_batch = []
         url_batch = self.img_urls.popleft(step)
-        n_images_to_fetch = 0
-
         image_data_batch = self.get_images(url_batch)
 
-        for image_future in as_completed(image_data_batch):
+        while image_data_batch:
+            image_future = image_data_batch.pop(0)
             content, url = image_future.result()
             hash_url = hash(url)
             status, button_img, img = self.process_fetched_data(content)
@@ -578,12 +583,9 @@ class ImageSearch(Toplevel):
                 self.saving_images_names.append(self.image_saving_name_pattern.format(hash_url))
             elif status == ImageSearch.StatusCodes.RETRIABLE_FETCHING_ERROR:
                 self.img_urls.append(url)
-                n_images_to_fetch += 1
+                add_fetching_to_queue()
             else:
-                n_images_to_fetch += 1
-        if request_depth < self.max_request_tries and n_images_to_fetch:
-            to_fetch_button_images_batch = self.process_batch(n_images_to_fetch, request_depth + 1)
-            button_images_batch.extend(to_fetch_button_images_batch)
+                add_fetching_to_queue()
         return button_images_batch
 
     def choose_pic(self, button):
@@ -660,13 +662,12 @@ if __name__ == "__main__":
 
     test_urls = ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"]
 
-    def test_scrapper(search_term: None) -> list:
+    def get_image_links(search_term: None) -> list:
         return ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"]
 
     root = Tk()
     root.withdraw()
 
     root.after(0, start_image_search("test", root, "./", init_urls=test_urls, show_image_width=300))
-    root.after(0, start_image_search("test", root, r"/", url_scrapper=test_scrapper, show_image_width=300))
+    root.after(0, start_image_search("test", root, "./", url_scrapper=get_image_links, show_image_width=300))
     root.mainloop()
-
