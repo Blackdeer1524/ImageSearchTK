@@ -463,7 +463,7 @@ class ImageSearch(Toplevel):
         self.on_closing_action = kwargs.get("on_close_action")
 
         self.resizable(0, 0)
-        self.protocol("WM_DELETE_WINDOW", self.close_image_search)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.bind("<Escape>", lambda event: self.destroy())
         self.bind("<Return>", lambda event: self.close_image_search())
 
@@ -501,14 +501,17 @@ class ImageSearch(Toplevel):
         self.show_more_button["state"] = NORMAL
         next(self.show_more_gen)
 
+    def destroy(self):
+        if self.on_closing_action is not None:
+            self.on_closing_action(self)
+        super(ImageSearch, self).destroy()
+
     def close_image_search(self):
         for saving_index in self.saving_indices:
             saving_image = self.prepare_image(self.saving_images[saving_index],
                                               width=self.optimal_result_width,
                                               height=self.optimal_result_height)
             saving_image.save(f"{self.saving_dir}/{self.saving_images_names[saving_index]}.png")
-        if self.on_closing_action is not None:
-            self.on_closing_action(self)
         self.destroy()
 
     @staticmethod
