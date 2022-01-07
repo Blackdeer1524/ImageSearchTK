@@ -399,7 +399,7 @@ class ImageSearch(Toplevel):
 
         self.headers = kwargs.get("headers")
         self.timeout = kwargs.get("timeout", 1)
-        self.max_request_tries = kwargs.get("max_request_tries", 5)
+        self.max_request_tries = kwargs.get("max_request_tries", 1)
 
         self.last_button_row = 0
         self.last_button_column = 0
