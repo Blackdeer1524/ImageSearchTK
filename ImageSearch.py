@@ -373,24 +373,19 @@ class ImageSearch(Toplevel):
         window_width_limit: maximum width of the window\n
         window_height_limit: maximum height of the window\n
         window_bg: window background color\n
-        entry_params(**kwargs)s: entry widget padams\n
+        entry_params(**kwargs)s: entry widget params\n
         command_button_params(**kwargs): "Show more" and "Download" buttons params\n
         on_close_action(**kwargs): additional action performed on closing.
         """
-        if not search_term:
-            messagebox.showerror(message="Empty search query")
-            return
-
         self.search_term = search_term
         self.img_urls = Deque(kwargs.get("init_urls", []))
         self.url_scrapper = kwargs.get("url_scrapper")
 
-        if self.url_scrapper is not None:
+        if self.search_term and self.url_scrapper is not None:
             try:
                 self.img_urls.extend(self.url_scrapper(self.search_term))
             except ConnectionError:
                 messagebox.showerror(message="Check your internet connection")
-                return
 
         self.button_bg = self.activebackground = "#FFFFFF"
         self.window_bg = kwargs.get("window_bg", "#F0F0F0")
@@ -410,7 +405,7 @@ class ImageSearch(Toplevel):
         self.last_button_column = 0
         self.last_button_index = 0
         self.n_images_in_row = kwargs.get("n_images_in_row", 3)
-        self.n_rows = kwargs.get("n_rows", 1)
+        self.n_rows = kwargs.get("n_rows", 5)
         self.n_images_per_cycle = self.n_rows * self.n_images_in_row
 
         self.pool = ThreadPoolExecutor(max_workers=self.n_images_per_cycle)
@@ -498,8 +493,11 @@ class ImageSearch(Toplevel):
         self.show_more_button.configure(command=lambda x=self.show_more_gen: next(x))
 
         self.inner_frame = self.sf.display_widget(partial(Frame, bg=self.window_bg))
-        self.show_more_button["state"] = NORMAL
-        next(self.show_more_gen)
+        if self.img_urls:
+            self.show_more_button["state"] = NORMAL
+            next(self.show_more_gen)
+        else:
+            self.show_more_button["state"] = DISABLED
 
     def destroy(self):
         if self.on_closing_action is not None:
@@ -628,13 +626,15 @@ class ImageSearch(Toplevel):
         self.update()
         self.command_widget_total_height = self.download_button.winfo_height() + self.search_field.winfo_height() + \
                                            2 * self.button_pady
+
+        button_image_batch = self.process_batch(self.n_images_per_cycle - self.last_button_column)
         while True:
-            button_image_batch = self.process_batch(self.n_images_per_cycle - self.last_button_column)
             self.show_button_image_batch(button_image_batch)
             if not self.img_urls:
-                self.show_more_button["state"] = DISABLED
                 break
             yield
+            button_image_batch = self.process_batch(self.n_images_per_cycle - self.last_button_column)
+        self.show_more_button["state"] = DISABLED
         yield
 
     def drop(self, event):
